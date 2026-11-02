@@ -6,7 +6,10 @@
 # root, so 2750 would let only root and the input group run it, and the user
 # launching Time Doctor is neither. The cost is that any local account can run
 # it; on a shared machine another account could point DISPLAY at its own X
-# server and receive the timing of every key press.
+# server and receive the timing of every key press. Worse, the binary parses
+# that server's replies through libX11 while it holds the input group for its
+# whole run, so a reply-parsing bug in libX11 would let that account read the
+# real key codes from /dev/input, not just their timing.
 # LIBDIR in the Makefile, with PREFIX=/usr as package() passes it.
 inputbridge=/usr/lib/td-waylandshot/td-inputbridge
 

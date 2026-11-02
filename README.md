@@ -162,8 +162,11 @@ package needs no manual step: on every install and upgrade it gives
 
 That is 2755, not the user install's 2750, because the packaged file belongs to
 root and 2750 would stop your account from running it. Any local account can
-therefore run it; on a machine shared with accounts you do not trust, use the
-user install above instead.
+therefore run it and point it at its own X server. That account receives the
+timing of every key you press, and because `td-inputbridge` parses the X
+server's replies while it holds the `input` group, a libX11 reply-parsing bug
+would hand it your real key codes too. On a machine shared with accounts you do
+not trust, use the user install above instead.
 
 A system-wide menu entry is shadowed by the one Time Doctor's installer writes
 into `~/.local/share/applications`; delete that one, or use the user install
