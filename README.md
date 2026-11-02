@@ -121,7 +121,8 @@ menu icon, default `~/timedoctor/timedoctor.png`).
 ### The input step
 
 `td-inputbridge` must read `/dev/input`, which belongs to the `input` group.
-Installing never runs `sudo`; it prints this instead, to run once by hand:
+The AUR package does this itself (see [Packaging](#packaging)). `make install`
+never runs `sudo`; it prints this instead, to run once by hand:
 
 ```sh
 sudo chgrp input ~/.local/lib/td-waylandshot/td-inputbridge
@@ -155,9 +156,21 @@ own entry comes back with its next update or reinstall.
 
 ## Packaging
 
-`packaging/aur` holds a `PKGBUILD` that installs into `/usr`. A system-wide
-menu entry is shadowed by the one Time Doctor's installer writes into
-`~/.local/share/applications`; delete that one, or use the user install above.
+`packaging/aur` holds a `PKGBUILD` that installs into `/usr`. Installing the
+package needs no manual step: on every install and upgrade it gives
+`/usr/lib/td-waylandshot/td-inputbridge` the `input` group and mode 2755.
+
+That is 2755, not the user install's 2750, because the packaged file belongs to
+root and 2750 would stop your account from running it. Any local account can
+therefore run it and point it at its own X server. That account receives the
+timing of every key you press, and because `td-inputbridge` parses the X
+server's replies while it holds the `input` group, a libX11 reply-parsing bug
+would hand it your real key codes too. On a machine shared with accounts you do
+not trust, use the user install above instead.
+
+A system-wide menu entry is shadowed by the one Time Doctor's installer writes
+into `~/.local/share/applications`; delete that one, or use the user install
+above.
 
 ## License
 

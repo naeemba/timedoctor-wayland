@@ -1,0 +1,25 @@
+# td-inputbridge reads /dev/input, which belongs to the input group. The group
+# is set here rather than in package() because its gid can differ between the
+# machine that builds the package and the one that installs it.
+#
+# Mode 2755, not the 2750 a ~/.local install uses: here the file belongs to
+# root, so 2750 would let only root and the input group run it, and the user
+# launching Time Doctor is neither. The cost is that any local account can run
+# it; on a shared machine another account could point DISPLAY at its own X
+# server and receive the timing of every key press. Worse, the binary parses
+# that server's replies through libX11 while it holds the input group for its
+# whole run, so a reply-parsing bug in libX11 would let that account read the
+# real key codes from /dev/input, not just their timing.
+
+# LIBDIR in the Makefile, with PREFIX=/usr as package() passes it.
+inputbridge=/usr/lib/td-waylandshot/td-inputbridge
+
+post_install() {
+  chgrp input "$inputbridge"
+  chmod 2755 "$inputbridge"
+}
+
+# pacman writes a fresh file on every upgrade, which drops the group and the bit.
+post_upgrade() {
+  post_install
+}
