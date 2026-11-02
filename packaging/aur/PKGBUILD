@@ -9,7 +9,7 @@ license=(MIT)
 depends=(bash grim xorg-xrandr libpulse libxcb xcb-util-image libx11 libxtst)
 optdepends=('webkit2gtk-4.1: needed by Time Doctor 3.20 and later')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('a8be99a4d237bf45c5d82ed30a98e05c5b1bf3d9175a9a06959e76bbd6f402e2')
 
 build() {
   cd "$pkgname-$pkgver"
