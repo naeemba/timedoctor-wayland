@@ -50,7 +50,7 @@
 #define TEST_BIT(b, a) (((a)[(b) / (8 * sizeof(long))] >> ((b) % (8 * sizeof(long)))) & 1)
 
 /* held[code - BTN_MISC] is set while that button holds the X pointer still. */
-struct device { int fd, direct; unsigned char held[KEY_OK - BTN_MISC]; char name[256]; };
+struct device { int fd, touch_is_click; unsigned char held[KEY_OK - BTN_MISC]; char name[256]; };
 static struct device devices[MAX_DEVICES];
 static int device_count;
 
@@ -81,12 +81,18 @@ static int is_input_device(int fd)
 	return 0;
 }
 
-/* Touchscreens and pen tablets, where BTN_TOUCH is the click itself. */
-static int is_direct_device(int fd)
+/*
+ * Touchscreens and pen tablets, where BTN_TOUCH is the click itself. Screenless
+ * pen tablets (Intuos and most others) are not INPUT_PROP_DIRECT, so a pen is
+ * recognised by BTN_TOOL_PEN, which a touchpad never has.
+ */
+static int is_touch_click_device(int fd)
 {
-	unsigned long properties[LONGS_FOR_BITS(INPUT_PROP_MAX + 1)] = {0};
+	unsigned long properties[LONGS_FOR_BITS(INPUT_PROP_MAX + 1)] = {0}, keys[LONGS_FOR_BITS(KEY_MAX + 1)] = {0};
 
-	return ioctl(fd, EVIOCGPROP(sizeof properties), properties) >= 0 && TEST_BIT(INPUT_PROP_DIRECT, properties);
+	if (ioctl(fd, EVIOCGPROP(sizeof properties), properties) >= 0 && TEST_BIT(INPUT_PROP_DIRECT, properties))
+		return 1;
+	return ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys) >= 0 && TEST_BIT(BTN_TOOL_PEN, keys);
 }
 
 static void scan_devices(void)
@@ -117,7 +123,7 @@ static void scan_devices(void)
 		}
 		memset(&devices[device_count], 0, sizeof devices[device_count]);
 		devices[device_count].fd = fd;
-		devices[device_count].direct = is_direct_device(fd);
+		devices[device_count].touch_is_click = is_touch_click_device(fd);
 		snprintf(devices[device_count].name, sizeof devices[device_count].name, "%s", entry->d_name);
 		device_count++;
 	}
@@ -134,15 +140,15 @@ static void drop_device(int i)
  * Whether a button code (BTN_MISC..KEY_OK) keeps the X pointer still while
  * down. Touchpad touch and tool codes (BTN_DIGI..BTN_WHEEL) do not, or a
  * resting finger would stop every warp; their press warps as a click. Pen
- * barrel buttons do, and so does BTN_TOUCH on a direct device, where it is
- * the click.
+ * barrel buttons do, and so does BTN_TOUCH on a touchscreen or pen tablet,
+ * where it is the click.
  */
 static int holds_pointer(const struct device *device, int code)
 {
 	if (code == BTN_STYLUS || code == BTN_STYLUS2 || code == BTN_STYLUS3)
 		return 1;
 	if (code == BTN_TOUCH)
-		return device->direct;
+		return device->touch_is_click;
 	return code < BTN_DIGI || code >= BTN_WHEEL;
 }
 
@@ -151,16 +157,21 @@ static int holds_pointer(const struct device *device, int code)
  * held buttons are read back from the kernel's key state. Events still queued
  * replay on top harmlessly: a press or release only sets or clears its bit.
  */
+static void held_from_key_state(struct device *device, const unsigned long *state)
+{
+	int code;
+
+	for (code = BTN_MISC; code < KEY_OK; code++)
+		device->held[code - BTN_MISC] = holds_pointer(device, code) && TEST_BIT(code, state);
+}
+
 static void resync_held(struct device *device)
 {
 	unsigned long state[LONGS_FOR_BITS(KEY_MAX + 1)] = {0};
-	int code;
 
-	memset(device->held, 0, sizeof device->held);
 	if (ioctl(device->fd, EVIOCGKEY(sizeof state), state) < 0)
-		return;
-	for (code = BTN_MISC; code < KEY_OK; code++)
-		device->held[code - BTN_MISC] = holds_pointer(device, code) && TEST_BIT(code, state);
+		memset(state, 0, sizeof state);
+	held_from_key_state(device, state);
 }
 
 /* The X pointer is left alone while any device has a button down. */

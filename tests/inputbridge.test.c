@@ -9,6 +9,7 @@
 #include <assert.h>
 
 #define EVENT(event_type, event_code, event_value) { .type = (event_type), .code = (event_code), .value = (event_value) }
+#define TEST_BIT_SET(b, a) ((a)[(b) / (8 * sizeof(long))] |= 1UL << ((b) % (8 * sizeof(long))))
 #define LENGTH(array) ((int)(sizeof (array) / sizeof (array)[0]))
 #define BATCH(device, array) read_batch(&devices[device], (array), LENGTH(array), &key_presses)
 
@@ -28,9 +29,12 @@ int main(void)
 	struct input_event stylus_press[] = { EVENT(EV_KEY, BTN_STYLUS, 1) };
 	struct input_event stylus_release[] = { EVENT(EV_KEY, BTN_STYLUS, 0) };
 
-	device_count = 3;	/* a mouse, a touchpad and a pen tablet */
-	devices[0].fd = devices[1].fd = devices[2].fd = -1;
-	devices[2].direct = 1;
+	unsigned long key_state[LONGS_FOR_BITS(KEY_MAX + 1)] = {0};
+
+	device_count = 4;	/* a mouse, a touchpad, a display pen tablet and a screenless one */
+	devices[0].fd = devices[1].fd = devices[2].fd = devices[3].fd = -1;
+	devices[2].touch_is_click = 1;	/* INPUT_PROP_DIRECT */
+	devices[3].touch_is_click = 1;	/* BTN_TOOL_PEN, not direct */
 
 	/* A left click: nothing moves the X pointer until the button is up. */
 	assert(BATCH(0, press) == WARP_NONE);
@@ -63,6 +67,9 @@ int main(void)
 	assert(BATCH(2, touch_down) == WARP_NONE);
 	assert(BATCH(2, move) == WARP_NONE);
 	assert(BATCH(2, touch_up) == WARP_CLICK);
+	assert(BATCH(3, touch_down) == WARP_NONE);
+	assert(BATCH(3, move) == WARP_NONE);
+	assert(BATCH(3, touch_up) == WARP_CLICK);
 
 	/* A pen barrel button is held on any device. */
 	assert(BATCH(1, stylus_press) == WARP_NONE);
@@ -73,6 +80,19 @@ int main(void)
 	BATCH(0, press);
 	assert(BATCH(0, dropped) == WARP_MOTION);
 	assert(BATCH(0, move) == WARP_MOTION);
+
+	/* The read-back keeps a button the kernel still has down... */
+	TEST_BIT_SET(BTN_LEFT, key_state);
+	held_from_key_state(&devices[0], key_state);
+	assert(BATCH(0, move) == WARP_NONE);
+	memset(key_state, 0, sizeof key_state);
+	held_from_key_state(&devices[0], key_state);
+	assert(BATCH(0, move) == WARP_MOTION);
+
+	/* ...but never restores a resting touchpad finger as held. */
+	TEST_BIT_SET(BTN_TOUCH, key_state);
+	held_from_key_state(&devices[1], key_state);
+	assert(BATCH(1, move) == WARP_MOTION);
 
 	/* A button held on the mouse stops warps from the touchpad too. */
 	BATCH(0, press);
