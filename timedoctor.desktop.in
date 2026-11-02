@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Time Doctor
+Comment=An application for tracking your working hours.
+GenericName=Time Doctor
+Keywords=Productivity;TimeTracking;RemoteWork
+Exec=@LIBDIR@/timedoctor-wayland --customuri=%u
+Terminal=false
+X-MultipleArgs=false
+Type=Application
+Icon=@ICON@
+Categories=Development
+StartupNotify=true

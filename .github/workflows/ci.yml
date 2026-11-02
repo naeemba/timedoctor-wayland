@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck libxcb1-dev libxcb-image0-dev libx11-dev libxtst-dev
+      - run: shellcheck install.sh timedoctor-wayland tests/install.test.sh
+      - name: Compile every source with -Wall -Werror
+        run: for source in *.c; do gcc -O2 -Wall -Werror -fPIC -c -o /dev/null "$source"; done
+      - run: make test

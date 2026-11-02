@@ -1,0 +1,24 @@
+# Maintainer: Naeem Baghi <baghinaeem@gmail.com>
+pkgname=timedoctor-wayland
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Unofficial helpers that make the Time Doctor Linux app track correctly under Hyprland (Wayland)"
+arch=(x86_64)
+url="https://github.com/naeemba/timedoctor-wayland"
+license=(MIT)
+depends=(bash grim xorg-xrandr libpulse libxcb xcb-util-image libx11 libxtst)
+optdepends=('webkit2gtk-4.1: needed by Time Doctor 3.20 and later')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  make
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  # The per-user icon path cannot be known here; the entry falls back to a name.
+  make DESTDIR="$pkgdir" PREFIX=/usr ICON=timedoctor install
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
