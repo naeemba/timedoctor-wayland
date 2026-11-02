@@ -1,8 +1,9 @@
 pkgbase = timedoctor-wayland
 	pkgdesc = Unofficial helpers that make the Time Doctor Linux app track correctly under Hyprland (Wayland)
 	pkgver = 0.1.0
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/naeemba/timedoctor-wayland
+	install = timedoctor-wayland.install
 	arch = x86_64
 	license = MIT
 	depends = bash
