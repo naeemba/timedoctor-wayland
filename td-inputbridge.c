@@ -9,9 +9,14 @@
  *                              (types nothing in any X window)
  *   - real motion/wheel     -> X pointer warped to the real Hyprland cursor
  *                              position (read from Hyprland's IPC socket)
- *   - real click/tap        -> the same warp, offset by 1px on every other
- *                              click so a click in place still moves it
- *                              (never an X button press)
+ *   - real click            -> the same warp, offset by 1px on every other
+ *                              click so a click in place still moves it,
+ *                              sent once the button is back up (never an X
+ *                              button press)
+ *   - real touch            -> the click warp when the finger lands
+ * While any mouse button is held no pointer motion is sent at all: a warp
+ * between press and release reads as a drag in X apps, which then drop a
+ * click that acts on release (a left click) or lose the drag itself.
  * Time Doctor compares pointer positions over time, so the X pointer has to
  * actually end up somewhere new; a nudge that undoes itself reads as idle.
  * Nothing is generated without real input, and key codes are never logged.
@@ -43,7 +48,7 @@
 #define LONGS_FOR_BITS(x) ((((x) - 1) / (8 * sizeof(long))) + 1)
 #define TEST_BIT(b, a) (((a)[(b) / (8 * sizeof(long))] >> ((b) % (8 * sizeof(long)))) & 1)
 
-struct device { int fd; char name[256]; };
+struct device { int fd, buttons_held; char name[256]; };
 static struct device devices[MAX_DEVICES];
 static int device_count;
 
@@ -101,6 +106,7 @@ static void scan_devices(void)
 			continue;
 		}
 		devices[device_count].fd = fd;
+		devices[device_count].buttons_held = 0;
 		snprintf(devices[device_count].name, sizeof devices[device_count].name, "%s", entry->d_name);
 		device_count++;
 	}
@@ -111,6 +117,55 @@ static void drop_device(int i)
 {
 	close(devices[i].fd);
 	devices[i] = devices[--device_count];
+}
+
+/* The X pointer is left alone while any device has a mouse button down. */
+static int any_button_held(void)
+{
+	int i;
+
+	for (i = 0; i < device_count; i++)
+		if (devices[i].buttons_held)
+			return 1;
+	return 0;
+}
+
+enum warp { WARP_NONE, WARP_MOTION, WARP_CLICK };
+
+/*
+ * Reads one batch of evdev events from one device: counts key presses into
+ * *keys, tracks the device's held buttons, and says what the X pointer should
+ * do, which is nothing while any device holds a button. Motion is throttled
+ * by the caller. Touch and tool codes (BTN_DIGI..BTN_WHEEL) are never held, or
+ * a resting finger would stop every warp; their press warps as a click did.
+ */
+static enum warp read_batch(struct device *device, const struct input_event *events, int count, int *keys)
+{
+	int motion = 0, click = 0, j;
+
+	*keys = 0;
+	for (j = 0; j < count; j++) {
+		const struct input_event *event = &events[j];
+
+		if (event->type == EV_REL || event->type == EV_ABS) {
+			motion = 1;
+		} else if (event->type != EV_KEY || event->value == 2) {
+			continue;	/* autorepeat is not new input */
+		} else if (event->code < BTN_MISC || event->code >= KEY_OK) {
+			*keys += event->value == 1;
+		} else if (event->code >= BTN_DIGI && event->code < BTN_WHEEL) {
+			click |= event->value == 1;
+		} else if (event->value == 1) {
+			device->buttons_held++;
+		} else {
+			if (device->buttons_held > 0)
+				device->buttons_held--;
+			click = 1;	/* the button is up now, so the warp cannot split a click */
+		}
+	}
+	if (any_button_held())
+		return WARP_NONE;
+	return click ? WARP_CLICK : motion ? WARP_MOTION : WARP_NONE;
 }
 
 /* A keycode with no keysyms and no modifier role types nothing anywhere. */
@@ -250,7 +305,8 @@ int main(void)
 		for (i = polled_devices - 1; i >= 0; i--) {
 			struct input_event events[64];
 			ssize_t bytes_read;
-			int key = 0, motion = 0, click = 0, x, y, j;
+			int key, x, y;
+			enum warp warp;
 
 			if (!(poll_fds[i].revents & (POLLIN | POLLHUP | POLLERR)))
 				continue;
@@ -259,23 +315,14 @@ int main(void)
 				drop_device(i);
 				continue;
 			}
-			for (j = 0; j < bytes_read / (ssize_t)sizeof events[0]; j++) {
-				if (events[j].type == EV_KEY && events[j].value == 1) {
-					if (events[j].code < BTN_MISC || events[j].code >= KEY_OK)
-						key++;
-					else
-						click = 1;	/* mouse button / touch */
-				} else if (events[j].type == EV_REL || events[j].type == EV_ABS) {
-					motion = 1;
-				}
-			}
+			warp = read_batch(&devices[i], events, bytes_read / (ssize_t)sizeof events[0], &key);
 			while (key--) {
 				XTestFakeKeyEvent(display, keycode, True, CurrentTime);
 				XTestFakeKeyEvent(display, keycode, False, CurrentTime);
 			}
-			if (click)
+			if (warp == WARP_CLICK)
 				click_offset = !click_offset;
-			if (click || (motion && now_ms() - last_motion >= MOTION_MIN_MS)) {
+			if (warp == WARP_CLICK || (warp == WARP_MOTION && now_ms() - last_motion >= MOTION_MIN_MS)) {
 				if (cursor_position(&x, &y)) {
 					XTestFakeMotionEvent(display, -1, x + click_offset, y, CurrentTime);
 				} else {
