@@ -43,7 +43,7 @@
 #define LONGS_FOR_BITS(x) ((((x) - 1) / (8 * sizeof(long))) + 1)
 #define TEST_BIT(b, a) (((a)[(b) / (8 * sizeof(long))] >> ((b) % (8 * sizeof(long)))) & 1)
 
-struct device { int fd; char name[32]; };
+struct device { int fd; char name[256]; };
 static struct device devices[MAX_DEVICES];
 static int device_count;
 
@@ -101,7 +101,7 @@ static void scan_devices(void)
 			continue;
 		}
 		devices[device_count].fd = fd;
-		snprintf(devices[device_count].name, sizeof devices[device_count].name, "%.31s", entry->d_name);
+		snprintf(devices[device_count].name, sizeof devices[device_count].name, "%s", entry->d_name);
 		device_count++;
 	}
 	closedir(directory);

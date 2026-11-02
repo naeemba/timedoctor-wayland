@@ -3,12 +3,14 @@ DESTDIR ?=
 CFLAGS ?= -O2
 CFLAGS += -Wall
 # Where Time Doctor's Linux installer puts the app; only the menu icon is read from it here.
-ICON ?= $(HOME)/timedoctor/timedoctor.png
+TIMEDOCTOR_DIR ?= $(HOME)/timedoctor
+ICON ?= $(TIMEDOCTOR_DIR)/timedoctor.png
 
 LIBDIR = $(PREFIX)/lib/td-waylandshot
 INSTALLDIR = $(DESTDIR)$(LIBDIR)
 APPLICATIONSDIR = $(DESTDIR)$(PREFIX)/share/applications
 SHIM_SOURCES = td-waylandshot.c td-activewindow.c td-sessiontype.c td-microphone.c
+INSTALLED_FILES = td-waylandshot.so td-inputbridge timedoctor-wayland
 
 # Copy beside the target and rename over it, so a running Time Doctor keeps the
 # file it mapped. An unchanged file is left alone: replacing td-inputbridge
@@ -27,9 +29,7 @@ td-inputbridge: td-inputbridge.c
 
 install: all
 	mkdir -p $(INSTALLDIR) $(APPLICATIONSDIR)
-	$(call place,td-waylandshot.so,$(INSTALLDIR)/td-waylandshot.so,755)
-	$(call place,td-inputbridge,$(INSTALLDIR)/td-inputbridge,755)
-	$(call place,timedoctor-wayland,$(INSTALLDIR)/timedoctor-wayland,755)
+	$(foreach file,$(INSTALLED_FILES),$(call place,$(file),$(INSTALLDIR)/$(file),755);)
 	sed -e 's|@LIBDIR@|$(LIBDIR)|' -e 's|@ICON@|$(ICON)|' timedoctor.desktop.in > $(APPLICATIONSDIR)/timedoctor.desktop
 	@# Setgid input reads every keyboard, so only the owner may run it (2750, not
 	@# 2755): another account could otherwise point DISPLAY at its own X server
@@ -40,7 +40,7 @@ install: all
 	fi
 
 uninstall:
-	rm -f $(INSTALLDIR)/td-waylandshot.so $(INSTALLDIR)/td-inputbridge $(INSTALLDIR)/timedoctor-wayland
+	rm -f $(addprefix $(INSTALLDIR)/,$(INSTALLED_FILES))
 	rmdir --ignore-fail-on-non-empty $(INSTALLDIR) 2>/dev/null || true
 	rm -f $(APPLICATIONSDIR)/timedoctor.desktop
 

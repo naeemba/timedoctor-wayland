@@ -5,8 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -d "$HOME/timedoctor" ]; then
-  echo "Time Doctor not installed in ~/timedoctor, nothing to do" >&2
+export TIMEDOCTOR_DIR=${TIMEDOCTOR_DIR:-$HOME/timedoctor}
+if [ ! -d "$TIMEDOCTOR_DIR" ]; then
+  echo "Time Doctor not installed in $TIMEDOCTOR_DIR, nothing to do" >&2
   exit 0
 fi
 make -s install PREFIX="$HOME/.local"
