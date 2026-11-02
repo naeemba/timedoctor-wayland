@@ -61,8 +61,10 @@ small program and a launcher run beside it.
   press becomes a press of a keycode with no keysym (it types nothing), and
   motion or a click warps the X pointer to the real cursor position from
   Hyprland. A click warps only once the button is back up, and nothing moves
-  the X pointer while a mouse button is held, so clicks and drags in X apps
-  are not turned into tiny drags. Nothing is sent without real input, and key
+  the X pointer while a mouse or pen button is held, or a pen tip or finger
+  is down on a touchscreen or pen tablet, so clicks and drags in X apps are
+  not turned into tiny drags. A finger resting on a touchpad does not hold
+  the pointer. Nothing is sent without real input, and key
   codes are never logged. It exits a minute after Time Doctor quits.
 - `timedoctor-wayland` is the launcher: it starts `td-inputbridge`, preloads
   the library, forces Qt's xcb platform and hides `WAYLAND_DISPLAY` from Time
