@@ -1,7 +1,7 @@
 pkgbase = timedoctor-wayland
 	pkgdesc = Unofficial helpers that make the Time Doctor Linux app track correctly under Hyprland (Wayland)
-	pkgver = 0.1.0
-	pkgrel = 2
+	pkgver = 0.1.1
+	pkgrel = 1
 	url = https://github.com/naeemba/timedoctor-wayland
 	install = timedoctor-wayland.install
 	arch = x86_64
@@ -15,7 +15,7 @@ pkgbase = timedoctor-wayland
 	depends = libx11
 	depends = libxtst
 	optdepends = webkit2gtk-4.1: needed by Time Doctor 3.20 and later
-	source = timedoctor-wayland-0.1.0.tar.gz::https://github.com/naeemba/timedoctor-wayland/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = a8be99a4d237bf45c5d82ed30a98e05c5b1bf3d9175a9a06959e76bbd6f402e2
+	source = timedoctor-wayland-0.1.1.tar.gz::https://github.com/naeemba/timedoctor-wayland/archive/refs/tags/v0.1.1.tar.gz
+	sha256sums = 6abf4e07a13f6f0cbf9023bd37eb41e924795fee88d00f10ccd44583b9cc4f00
 
 pkgname = timedoctor-wayland
