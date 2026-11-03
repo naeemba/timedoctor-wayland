@@ -6,8 +6,9 @@
 BUILD=$(dirname "$(readlink -f "$0")")
 TIMEDOCTOR_DIR=${TIMEDOCTOR_DIR:-$HOME/timedoctor}
 export TD_SHOT_LOG="${TD_SHOT_LOG:-$HOME/.cache/td-waylandshot.log}"
-# Mirror real keyboard/mouse activity into XWayland; exits on its own after Time Doctor quits.
-"$BUILD/td-inputbridge" 2>>"$TD_SHOT_LOG" &
+# Mirror real keyboard/mouse activity into XWayland. The exec below makes this
+# shell's pid Time Doctor's, so the bridge exits when that Time Doctor does.
+"$BUILD/td-inputbridge" "$$" 2>>"$TD_SHOT_LOG" &
 
 export LD_PRELOAD="$BUILD/td-waylandshot.so${LD_PRELOAD:+:$LD_PRELOAD}"
 export QT_QPA_PLATFORM=xcb XDG_SESSION_TYPE=x11

@@ -70,7 +70,9 @@ small program and a launcher run beside it.
   is down on a touchscreen or pen tablet, so clicks and drags in X apps are
   not turned into tiny drags. A finger resting on a touchpad does not hold
   the pointer. Nothing is sent without real input, and key
-  codes are never logged. It exits a minute after Time Doctor quits.
+  codes are never logged. It exits when the Time Doctor it was started with
+  exits; a bridge started while an older one is still running waits for that
+  one to exit, then takes over.
 - `timedoctor-wayland` is the launcher: it starts `td-inputbridge`, preloads
   the library, forces Qt's xcb platform and hides `WAYLAND_DISPLAY` from Time
   Doctor (passing it on to `grim` as `TD_WAYLAND_DISPLAY`).
