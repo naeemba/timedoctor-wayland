@@ -34,7 +34,7 @@ under XWayland, which breaks almost everything it tracks:
 
 ## How each piece works
 
-Four sources are built into one `LD_PRELOAD` library, `td-waylandshot.so`; a
+Five sources are built into one `LD_PRELOAD` library, `td-waylandshot.so`; a
 small program and a launcher run beside it.
 
 - `td-waylandshot.c` hooks the xcb calls Qt uses to grab the root window
@@ -73,9 +73,11 @@ small program and a launcher run beside it.
   codes are never logged. It exits when the Time Doctor it was started with
   exits; a bridge started while an older one is still running waits for that
   one to exit, then takes over.
-- `timedoctor-wayland` is the launcher: it starts `td-inputbridge`, preloads
-  the library, forces Qt's xcb platform and hides `WAYLAND_DISPLAY` from Time
-  Doctor (passing it on to `grim` as `TD_WAYLAND_DISPLAY`).
+- `td-inputbridge-start.c`, also in the library, starts `td-inputbridge` from
+  each Time Doctor that loads it, so one that restarts itself still gets a
+  bridge.
+- `timedoctor-wayland` is the launcher: it preloads the library, forces Qt's
+  xcb platform and hides `WAYLAND_DISPLAY` from Time Doctor (passing it on to `grim` as `TD_WAYLAND_DISPLAY`).
 
 ## Supported Time Doctor versions
 

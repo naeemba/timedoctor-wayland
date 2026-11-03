@@ -25,9 +25,9 @@
  * Nothing is generated without real input, and key codes are never logged.
  *
  * Installed setgid "input" so only this binary can open /dev/input.
- * Belongs to the Time Doctor it was launched for: the launcher starts it and
- * then execs Time Doctor, so its parent is Time Doctor itself, and it exits
- * with that parent. A bridge started while an older one still holds the lock
+ * Belongs to the Time Doctor it was launched for: the preloaded library forks
+ * it from Time Doctor (td-inputbridge-start.c), so its parent is Time Doctor
+ * itself, and it exits with that parent. A bridge started while an older one still holds the lock
  * waits for it rather than giving up, so a quick restart (or an updated
  * binary) takes over once the old Time Doctor and its bridge are gone.
  */
