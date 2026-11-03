@@ -77,7 +77,8 @@ small program and a launcher run beside it.
   each Time Doctor that loads it, so one that restarts itself still gets a
   bridge.
 - `timedoctor-wayland` is the launcher: it preloads the library, forces Qt's
-  xcb platform and hides `WAYLAND_DISPLAY` from Time Doctor (passing it on to `grim` as `TD_WAYLAND_DISPLAY`).
+  xcb platform and hides `WAYLAND_DISPLAY` from Time Doctor (passing it on to
+  `grim` as `TD_WAYLAND_DISPLAY`).
 
 ## Supported Time Doctor versions
 

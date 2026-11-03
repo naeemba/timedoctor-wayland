@@ -27,9 +27,10 @@
  * Installed setgid "input" so only this binary can open /dev/input.
  * Belongs to the Time Doctor it was launched for: the preloaded library forks
  * it from Time Doctor (td-inputbridge-start.c), so its parent is Time Doctor
- * itself, and it exits with that parent. A bridge started while an older one still holds the lock
- * waits for it rather than giving up, so a quick restart (or an updated
- * binary) takes over once the old Time Doctor and its bridge are gone.
+ * itself, and it exits with that parent. A bridge started while an older one
+ * still holds the lock waits for it rather than giving up, so a quick restart
+ * (or an updated binary) takes over once the old Time Doctor and its bridge
+ * are gone.
  */
 #include <X11/Xlib.h>
 #include <X11/extensions/XTest.h>
