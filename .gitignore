@@ -1,3 +1,4 @@
 *.so
 *.new
 /td-inputbridge
+/tests/inputbridge.test

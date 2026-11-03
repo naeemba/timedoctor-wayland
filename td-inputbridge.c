@@ -9,9 +9,15 @@
  *                              (types nothing in any X window)
  *   - real motion/wheel     -> X pointer warped to the real Hyprland cursor
  *                              position (read from Hyprland's IPC socket)
- *   - real click/tap        -> the same warp, offset by 1px on every other
- *                              click so a click in place still moves it
- *                              (never an X button press)
+ *   - real click            -> the same warp, offset by 1px on every other
+ *                              click so a click in place still moves it,
+ *                              sent once the button is back up (never an X
+ *                              button press)
+ *   - real touchpad touch   -> the click warp when the finger lands
+ * While any mouse button, pen barrel button, or pen tip or finger on a
+ * touchscreen or pen tablet is down, no pointer motion is sent at all: a warp
+ * between press and release reads as a drag in X apps, which then drop a
+ * click that acts on release (a left click) or lose the drag itself.
  * Time Doctor compares pointer positions over time, so the X pointer has to
  * actually end up somewhere new; a nudge that undoes itself reads as idle.
  * Nothing is generated without real input, and key codes are never logged.
@@ -43,7 +49,8 @@
 #define LONGS_FOR_BITS(x) ((((x) - 1) / (8 * sizeof(long))) + 1)
 #define TEST_BIT(b, a) (((a)[(b) / (8 * sizeof(long))] >> ((b) % (8 * sizeof(long)))) & 1)
 
-struct device { int fd; char name[256]; };
+/* held[code - BTN_MISC] is set while that button holds the X pointer still. */
+struct device { int fd, touch_is_click; unsigned char held[KEY_OK - BTN_MISC]; char name[256]; };
 static struct device devices[MAX_DEVICES];
 static int device_count;
 
@@ -74,6 +81,20 @@ static int is_input_device(int fd)
 	return 0;
 }
 
+/*
+ * Touchscreens and pen tablets, where BTN_TOUCH is the click itself. Screenless
+ * pen tablets (Intuos and most others) are not INPUT_PROP_DIRECT, so a pen is
+ * recognised by BTN_TOOL_PEN, which a touchpad never has.
+ */
+static int is_touch_click_device(int fd)
+{
+	unsigned long properties[LONGS_FOR_BITS(INPUT_PROP_MAX + 1)] = {0}, keys[LONGS_FOR_BITS(KEY_MAX + 1)] = {0};
+
+	if (ioctl(fd, EVIOCGPROP(sizeof properties), properties) >= 0 && TEST_BIT(INPUT_PROP_DIRECT, properties))
+		return 1;
+	return ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys) >= 0 && TEST_BIT(BTN_TOOL_PEN, keys);
+}
+
 static void scan_devices(void)
 {
 	DIR *directory = opendir("/dev/input");
@@ -100,7 +121,9 @@ static void scan_devices(void)
 			close(fd);
 			continue;
 		}
+		memset(&devices[device_count], 0, sizeof devices[device_count]);
 		devices[device_count].fd = fd;
+		devices[device_count].touch_is_click = is_touch_click_device(fd);
 		snprintf(devices[device_count].name, sizeof devices[device_count].name, "%s", entry->d_name);
 		device_count++;
 	}
@@ -111,6 +134,93 @@ static void drop_device(int i)
 {
 	close(devices[i].fd);
 	devices[i] = devices[--device_count];
+}
+
+/*
+ * Whether a button code (BTN_MISC..KEY_OK) keeps the X pointer still while
+ * down. Touchpad touch and tool codes (BTN_DIGI..BTN_WHEEL) do not, or a
+ * resting finger would stop every warp; their press warps as a click. Pen
+ * barrel buttons do, and so does BTN_TOUCH on a touchscreen or pen tablet,
+ * where it is the click.
+ */
+static int holds_pointer(const struct device *device, int code)
+{
+	if (code == BTN_STYLUS || code == BTN_STYLUS2 || code == BTN_STYLUS3)
+		return 1;
+	if (code == BTN_TOUCH)
+		return device->touch_is_click;
+	return code < BTN_DIGI || code >= BTN_WHEEL;
+}
+
+/*
+ * After SYN_DROPPED the kernel has discarded events, maybe a release, so the
+ * held buttons are read back from the kernel's key state. Events still queued
+ * replay on top harmlessly: a press or release only sets or clears its bit.
+ */
+static void held_from_key_state(struct device *device, const unsigned long *state)
+{
+	int code;
+
+	for (code = BTN_MISC; code < KEY_OK; code++)
+		device->held[code - BTN_MISC] = holds_pointer(device, code) && TEST_BIT(code, state);
+}
+
+static void resync_held(struct device *device)
+{
+	unsigned long state[LONGS_FOR_BITS(KEY_MAX + 1)] = {0};
+
+	if (ioctl(device->fd, EVIOCGKEY(sizeof state), state) < 0)
+		memset(state, 0, sizeof state);
+	held_from_key_state(device, state);
+}
+
+/* The X pointer is left alone while any device has a button down. */
+static int any_button_held(void)
+{
+	int i, code;
+
+	for (i = 0; i < device_count; i++)
+		for (code = 0; code < KEY_OK - BTN_MISC; code++)
+			if (devices[i].held[code])
+				return 1;
+	return 0;
+}
+
+enum warp { WARP_NONE, WARP_MOTION, WARP_CLICK };
+
+/*
+ * Reads one batch of evdev events from one device: counts key presses into
+ * *key_presses, tracks the device's held buttons, and says what the X pointer
+ * should do, which is nothing while any device holds a button. Motion is
+ * throttled by the caller.
+ */
+static enum warp read_batch(struct device *device, const struct input_event *events, int count, int *key_presses)
+{
+	const struct input_event *event;
+	int motion = 0, click = 0, dropped = 0;
+
+	*key_presses = 0;
+	for (event = events; event < events + count; event++) {
+		if (event->type == EV_SYN && event->code == SYN_DROPPED) {
+			dropped = 1;
+		} else if (event->type == EV_REL || event->type == EV_ABS) {
+			motion = 1;
+		} else if (event->type != EV_KEY || event->value == 2) {
+			continue;	/* autorepeat is not new input */
+		} else if (event->code < BTN_MISC || event->code >= KEY_OK) {
+			*key_presses += event->value == 1;
+		} else if (!holds_pointer(device, event->code)) {
+			click |= event->value == 1;
+		} else {
+			device->held[event->code - BTN_MISC] = event->value == 1;
+			click |= event->value == 0;	/* the button is up now, so the warp cannot split a click */
+		}
+	}
+	if (dropped)
+		resync_held(device);
+	if (any_button_held())
+		return WARP_NONE;
+	return click ? WARP_CLICK : motion ? WARP_MOTION : WARP_NONE;
 }
 
 /* A keycode with no keysyms and no modifier role types nothing anywhere. */
@@ -250,7 +360,8 @@ int main(void)
 		for (i = polled_devices - 1; i >= 0; i--) {
 			struct input_event events[64];
 			ssize_t bytes_read;
-			int key = 0, motion = 0, click = 0, x, y, j;
+			int key_presses, x, y;
+			enum warp warp;
 
 			if (!(poll_fds[i].revents & (POLLIN | POLLHUP | POLLERR)))
 				continue;
@@ -259,23 +370,14 @@ int main(void)
 				drop_device(i);
 				continue;
 			}
-			for (j = 0; j < bytes_read / (ssize_t)sizeof events[0]; j++) {
-				if (events[j].type == EV_KEY && events[j].value == 1) {
-					if (events[j].code < BTN_MISC || events[j].code >= KEY_OK)
-						key++;
-					else
-						click = 1;	/* mouse button / touch */
-				} else if (events[j].type == EV_REL || events[j].type == EV_ABS) {
-					motion = 1;
-				}
-			}
-			while (key--) {
+			warp = read_batch(&devices[i], events, bytes_read / (ssize_t)sizeof events[0], &key_presses);
+			while (key_presses--) {
 				XTestFakeKeyEvent(display, keycode, True, CurrentTime);
 				XTestFakeKeyEvent(display, keycode, False, CurrentTime);
 			}
-			if (click)
+			if (warp == WARP_CLICK)
 				click_offset = !click_offset;
-			if (click || (motion && now_ms() - last_motion >= MOTION_MIN_MS)) {
+			if (warp == WARP_CLICK || (warp == WARP_MOTION && now_ms() - last_motion >= MOTION_MIN_MS)) {
 				if (cursor_position(&x, &y)) {
 					XTestFakeMotionEvent(display, -1, x + click_offset, y, CurrentTime);
 				} else {

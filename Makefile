@@ -44,8 +44,12 @@ uninstall:
 	rmdir --ignore-fail-on-non-empty $(INSTALLDIR) 2>/dev/null || true
 	rm -f $(APPLICATIONSDIR)/timedoctor.desktop
 
-test: all
+tests/inputbridge.test: tests/inputbridge.test.c td-inputbridge.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< -lX11 -lXtst
+
+test: all tests/inputbridge.test
 	tests/install.test.sh
+	tests/inputbridge.test
 
 clean:
-	rm -f td-waylandshot.so td-inputbridge
+	rm -f td-waylandshot.so td-inputbridge tests/inputbridge.test
