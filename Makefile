@@ -10,7 +10,7 @@ LIBDIR = $(PREFIX)/lib/td-waylandshot
 INSTALLDIR = $(DESTDIR)$(LIBDIR)
 APPLICATIONSDIR = $(DESTDIR)$(PREFIX)/share/applications
 INPUTBRIDGE_LIBS = -lX11 -lXtst -lXrandr
-SHIM_SOURCES = td-waylandshot.c td-activewindow.c td-sessiontype.c td-microphone.c
+SHIM_SOURCES = td-waylandshot.c td-activewindow.c td-sessiontype.c td-microphone.c td-inputbridge-start.c
 INSTALLED_FILES = td-waylandshot.so td-inputbridge timedoctor-wayland
 
 # Copy beside the target and rename over it, so a running Time Doctor keeps the
@@ -50,6 +50,7 @@ tests/inputbridge.test: tests/inputbridge.test.c td-inputbridge.c
 
 test: all tests/inputbridge.test
 	tests/install.test.sh
+	tests/inputbridge-start.test.sh
 	tests/inputbridge.test
 
 clean:

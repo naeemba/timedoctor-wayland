@@ -7,6 +7,73 @@
 #include "../td-inputbridge.c"
 #undef main
 #include <assert.h>
+#include <sys/wait.h>
+
+/*
+ * A launcher process starts a bridge-like child tied to it, then exits; the
+ * child must die with it. The child holds the write end of `alive`, so the
+ * read sees end-of-file once it is gone. A child tied to a pid that is not
+ * its parent gives up at once.
+ */
+static void check_owner_tie(void)
+{
+	int alive[2], ready[2];
+	char byte;
+	pid_t launcher;
+	int status;
+	struct pollfd watch;
+
+	assert(pipe(alive) == 0 && pipe(ready) == 0);
+	launcher = fork();
+	assert(launcher >= 0);
+	if (launcher == 0) {
+		if (fork() == 0) {
+			close(alive[0]), close(ready[0]);
+			if (!tie_to_owner(getppid()))
+				_exit(1);
+			if (write(ready[1], "x", 1) != 1)
+				_exit(1);
+			alarm(10);	/* never outlive a failed check for long */
+			for (;;)
+				pause();
+		}
+		close(ready[1]);
+		_exit(read(ready[0], &byte, 1) == 1 ? 0 : 1);	/* Time Doctor quits once the bridge is set up */
+	}
+	close(alive[1]), close(ready[1]);
+	assert(waitpid(launcher, &status, 0) == launcher && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	watch = (struct pollfd){ alive[0], POLLIN, 0 };
+	assert(poll(&watch, 1, 2000) == 1 && read(alive[0], &byte, 1) == 0);
+	close(alive[0]), close(ready[0]);
+
+	launcher = fork();
+	assert(launcher >= 0);
+	if (launcher == 0)
+		_exit(tie_to_owner(getppid() + 1));
+	assert(waitpid(launcher, &status, 0) == launcher && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+/* A second bridge waits while the lock is held and takes it once it is free. */
+static void check_lock_takeover(void)
+{
+	char lock_path[] = "/tmp/inputbridge-test-lock-XXXXXX";
+	int holder = mkstemp(lock_path), status;
+	pid_t waiter;
+
+	assert(holder >= 0 && flock(holder, LOCK_EX) == 0);
+	waiter = fork();
+	assert(waiter >= 0);
+	if (waiter == 0) {
+		close(holder);	/* a forked copy would hold the lock too */
+		alarm(10);
+		_exit(take_lock(lock_path) ? 0 : 1);
+	}
+	usleep(200000);
+	assert(waitpid(waiter, &status, WNOHANG) == 0);	/* still waiting */
+	close(holder);	/* the old bridge exits */
+	assert(waitpid(waiter, &status, 0) == waiter && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	unlink(lock_path);
+}
 
 #define EVENT(event_type, event_code, event_value) { .type = (event_type), .code = (event_code), .value = (event_value) }
 #define TEST_BIT_SET(b, a) ((a)[(b) / (8 * sizeof(long))] |= 1UL << ((b) % (8 * sizeof(long))))
@@ -165,6 +232,9 @@ int main(void)
 	/* More outputs than fit: the extra one is dropped and its lines change nothing. */
 	assert(parse_hyprland_monitors(overflow_reply, layout, 2) == 2);
 	assert(!strcmp(layout[1].name, "DP-2") && layout[1].x == 1152 && layout[1].width == 1152);
+
+	check_owner_tie();
+	check_lock_takeover();
 
 	puts("inputbridge: ok");
 	return 0;

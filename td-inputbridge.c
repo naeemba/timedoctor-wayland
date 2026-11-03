@@ -25,7 +25,12 @@
  * Nothing is generated without real input, and key codes are never logged.
  *
  * Installed setgid "input" so only this binary can open /dev/input.
- * Exits when no "timedoctor" process has existed for EXIT_GRACE_SECONDS seconds.
+ * Belongs to the Time Doctor it was launched for: the preloaded library forks
+ * it from Time Doctor (td-inputbridge-start.c), so its parent is Time Doctor
+ * itself, and it exits with that parent. A bridge started while an older one
+ * still holds the lock waits for it rather than giving up, so a quick restart
+ * (or an updated binary) takes over once the old Time Doctor and its bridge
+ * are gone.
  */
 #include <X11/Xlib.h>
 #include <X11/extensions/XTest.h>
@@ -35,12 +40,14 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/inotify.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <time.h>
@@ -48,7 +55,6 @@
 
 #define MAX_DEVICES 64
 #define MOTION_MIN_MS 100
-#define EXIT_GRACE_SECONDS 60
 #define LONGS_FOR_BITS(x) ((((x) - 1) / (8 * sizeof(long))) + 1)
 #define TEST_BIT(b, a) (((a)[(b) / (8 * sizeof(long))] >> ((b) % (8 * sizeof(long)))) & 1)
 
@@ -400,45 +406,50 @@ static enum root_cursor root_cursor_position(Display *display, int *root_x, int 
 		ROOT_CURSOR_FOUND : ROOT_CURSOR_OFF_OUTPUTS;
 }
 
-static int timedoctor_running(void)
+/*
+ * Ties this process to `owner`, the pid of the Time Doctor that started it:
+ * the kernel sends SIGTERM when the parent exits. Returns 0 when the parent
+ * is already not `owner` (it exited before the tie was made, and the bridge
+ * was handed to another process).
+ */
+static int tie_to_owner(pid_t owner)
 {
-	DIR *directory = opendir("/proc");
-	struct dirent *entry;
-	int found = 0;
-
-	if (!directory)
-		return 1;
-	while (!found && (entry = readdir(directory))) {
-		char path[300], comm[64] = "";
-		FILE *file;
-
-		if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
-			continue;
-		snprintf(path, sizeof path, "/proc/%s/comm", entry->d_name);
-		file = fopen(path, "r");
-		if (!file)
-			continue;
-		if (fgets(comm, sizeof comm, file) && !strncmp(comm, "timedoctor", 10))
-			found = 1;
-		fclose(file);
-	}
-	closedir(directory);
-	return found;
+	if (prctl(PR_SET_PDEATHSIG, SIGTERM) < 0)
+		return 0;
+	return getppid() == owner;
 }
 
-int main(void)
+/*
+ * Takes the one-bridge lock, waiting while an older bridge holds it: that one
+ * exits with its own Time Doctor. The descriptor stays open for the process's
+ * lifetime, which is what holds the lock.
+ */
+static int take_lock(const char *lock_path)
+{
+	int lock_fd = open(lock_path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+
+	if (lock_fd < 0)
+		return 0;
+	if (!flock(lock_fd, LOCK_EX | LOCK_NB))
+		return 1;
+	fprintf(stderr, "td-inputbridge: waiting for the previous bridge to exit\n");
+	return !flock(lock_fd, LOCK_EX);
+}
+
+int main(int argc, char **argv)
 {
 	char lock_path[256];
 	const char *runtime_directory = getenv("XDG_RUNTIME_DIR");
-	int lock_fd, inotify_fd, keycode, event_base, error_base, major, minor, direction = 1, click_offset = 0, i;
+	int inotify_fd, keycode, event_base, error_base, major, minor, direction = 1, click_offset = 0, i;
 	int warned_off_outputs = 0, warned_unavailable = 0;
-	long last_motion = 0, last_seen_timedoctor = now_ms();
+	long last_motion = 0;
 	Display *display;
 
+	if (!tie_to_owner(argc > 1 ? (pid_t)atol(argv[1]) : getppid()))
+		return 0;	/* Time Doctor is already gone */
 	snprintf(lock_path, sizeof lock_path, "%s/td-inputbridge.lock", runtime_directory ? runtime_directory : "/tmp");
-	lock_fd = open(lock_path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
-	if (lock_fd < 0 || flock(lock_fd, LOCK_EX | LOCK_NB) < 0)
-		return 0;	/* already running */
+	if (!take_lock(lock_path))
+		return 1;
 
 	display = XOpenDisplay(NULL);
 	if (!display || !XTestQueryExtension(display, &event_base, &error_base, &major, &minor)) {
@@ -465,7 +476,7 @@ int main(void)
 		poll_fds[poll_count++] = (struct pollfd){ inotify_fd, POLLIN, 0 };
 		poll_fds[poll_count++] = (struct pollfd){ x_fd, POLLIN, 0 };
 
-		if (poll(poll_fds, poll_count, 10000) < 0 && errno != EINTR)
+		if (poll(poll_fds, poll_count, -1) < 0 && errno != EINTR)
 			return 1;
 
 		if (poll_fds[poll_count - 1].revents & (POLLHUP | POLLERR))
@@ -525,10 +536,5 @@ int main(void)
 			}
 		}
 		XFlush(display);
-
-		if (timedoctor_running())
-			last_seen_timedoctor = now_ms();
-		else if (now_ms() - last_seen_timedoctor > EXIT_GRACE_SECONDS * 1000L)
-			return 0;
 	}
 }

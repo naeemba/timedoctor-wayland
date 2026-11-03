@@ -6,9 +6,8 @@
 BUILD=$(dirname "$(readlink -f "$0")")
 TIMEDOCTOR_DIR=${TIMEDOCTOR_DIR:-$HOME/timedoctor}
 export TD_SHOT_LOG="${TD_SHOT_LOG:-$HOME/.cache/td-waylandshot.log}"
-# Mirror real keyboard/mouse activity into XWayland; exits on its own after Time Doctor quits.
-"$BUILD/td-inputbridge" 2>>"$TD_SHOT_LOG" &
-
+# The preloaded library starts td-inputbridge (keyboard/mouse activity into
+# XWayland) for each Time Doctor, a self-restarted one included.
 export LD_PRELOAD="$BUILD/td-waylandshot.so${LD_PRELOAD:+:$LD_PRELOAD}"
 export QT_QPA_PLATFORM=xcb XDG_SESSION_TYPE=x11
 # 3.20+ treats a set WAYLAND_DISPLAY as a Wayland session (the shim answers its
