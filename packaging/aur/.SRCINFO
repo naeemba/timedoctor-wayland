@@ -14,6 +14,7 @@ pkgbase = timedoctor-wayland
 	depends = xcb-util-image
 	depends = libx11
 	depends = libxtst
+	depends = libxrandr
 	optdepends = webkit2gtk-4.1: needed by Time Doctor 3.20 and later
 	source = timedoctor-wayland-0.1.1.tar.gz::https://github.com/naeemba/timedoctor-wayland/archive/refs/tags/v0.1.1.tar.gz
 	sha256sums = 6abf4e07a13f6f0cbf9023bd37eb41e924795fee88d00f10ccd44583b9cc4f00

@@ -9,6 +9,7 @@ ICON ?= $(TIMEDOCTOR_DIR)/timedoctor.png
 LIBDIR = $(PREFIX)/lib/td-waylandshot
 INSTALLDIR = $(DESTDIR)$(LIBDIR)
 APPLICATIONSDIR = $(DESTDIR)$(PREFIX)/share/applications
+INPUTBRIDGE_LIBS = -lX11 -lXtst -lXrandr
 SHIM_SOURCES = td-waylandshot.c td-activewindow.c td-sessiontype.c td-microphone.c
 INSTALLED_FILES = td-waylandshot.so td-inputbridge timedoctor-wayland
 
@@ -25,7 +26,7 @@ td-waylandshot.so: $(SHIM_SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -shared -fPIC $(LDFLAGS) -o $@ $(SHIM_SOURCES) -ldl -lxcb -lxcb-image -lpthread
 
 td-inputbridge: td-inputbridge.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< -lX11 -lXtst
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< $(INPUTBRIDGE_LIBS)
 
 install: all
 	mkdir -p $(INSTALLDIR) $(APPLICATIONSDIR)
@@ -45,7 +46,7 @@ uninstall:
 	rm -f $(APPLICATIONSDIR)/timedoctor.desktop
 
 tests/inputbridge.test: tests/inputbridge.test.c td-inputbridge.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< -lX11 -lXtst
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< $(INPUTBRIDGE_LIBS)
 
 test: all tests/inputbridge.test
 	tests/install.test.sh

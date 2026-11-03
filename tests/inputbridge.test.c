@@ -105,6 +105,67 @@ int main(void)
 	drop_device(0);
 	assert(BATCH(0, move) == WARP_MOTION);
 
+	/* Hyprland's layout and XWayland's root order the same outputs differently. */
+	char hyprland_reply[] =
+		"Monitor eDP-1 (ID 0):\n\t1920x1080@144.02299 at 4480x360\n\tdescription: BOE 0x0AE3\n"
+		"\tmake: BOE\n\tmodel: 0x0AE3\n\tphysical size (mm): 340x190\n\tserial: \n"
+		"\tactive workspace: 10 (10)\n\tspecial workspace: 0 ()\n\treserved: 0 42 0 42\n"
+		"\tscale: 1\n\ttransform: 0\n\tfocused: no\n\tdisabled: false\n\tmirrorOf: none\n"
+		"\tavailableModes: 1920x1080@144.02Hz 2560x1440@120.00Hz \n\n"
+		"Monitor DP-3 (ID 1):\n\t2560x1440@59.95100 at 1920x0\n\tscale: 1.00\n\ttransform: 0\n\n"
+		"Monitor HDMI-A-1 (ID 2):\n\t1920x1080@60.00000 at 0x360\n\tscale: 1.00\n\ttransform: 0\n";
+	struct monitor root[] = {
+		{ "eDP-1", 0, 0, 1920, 1080 }, { "DP-3", 1920, 0, 2560, 1440 }, { "HDMI-A-1", 4480, 0, 1920, 1080 },
+	};
+	struct monitor layout[MAX_MONITORS];
+	int layout_count = parse_hyprland_monitors(hyprland_reply, layout, MAX_MONITORS), root_x, root_y;
+
+	assert(layout_count == 3);
+	assert(!strcmp(layout[2].name, "HDMI-A-1") && layout[2].x == 0 && layout[2].y == 360);
+	assert(layout[2].width == 1920 && layout[2].height == 1080);
+	/* The LG lines up in both, so its points pass through unchanged. */
+	assert(layout_to_root(layout, layout_count, root, LENGTH(root), 2000, 100, &root_x, &root_y));
+	assert(root_x == 2000 && root_y == 100);
+	/* The Samsung is leftmost in Hyprland, rightmost and 360px higher in XWayland. */
+	assert(layout_to_root(layout, layout_count, root, LENGTH(root), 10, 370, &root_x, &root_y));
+	assert(root_x == 4490 && root_y == 10);
+	/* The laptop is the other way round. */
+	assert(layout_to_root(layout, layout_count, root, LENGTH(root), 6399, 1439, &root_x, &root_y));
+	assert(root_x == 1919 && root_y == 1079);
+	/* Above the Samsung, in the gap the LG's height leaves: no output, no warp. */
+	assert(!layout_to_root(layout, layout_count, root, LENGTH(root), 10, 100, &root_x, &root_y));
+	/* An output XWayland does not list yet (just plugged in): no warp. */
+	assert(!layout_to_root(layout, layout_count, root, 2, 10, 370, &root_x, &root_y));
+
+	/*
+	 * Scale 1.25, rotated 90 and 270 degrees: the layout size is the pixel
+	 * size scaled down, then swapped. A 180 degree turn keeps it. A mode-like
+	 * line before the first Monitor belongs to no output.
+	 */
+	char scaled_reply[] = "\t1280x720@60.0 at 9x9\n"
+		"Monitor DP-1 (ID 0):\n\t2560x1440@60.0 at 0x0\n\tscale: 1.25\n\ttransform: 1\n"
+		"Monitor DP-2 (ID 1):\n\t2560x1440@60.0 at 1152x0\n\tscale: 1.25\n\ttransform: 3\n"
+		"Monitor DP-4 (ID 2):\n\t1920x1080@60.0 at 2304x0\n\tscale: 1.00\n\ttransform: 2\n";
+	char overflow_reply[sizeof scaled_reply];
+	struct monitor scaled_root[] = {
+		{ "DP-1", 0, 0, 1440, 2560 }, { "DP-2", 1440, 0, 1440, 2560 }, { "DP-4", 2880, 0, 1920, 1080 },
+	};
+	memcpy(overflow_reply, scaled_reply, sizeof scaled_reply);
+	assert(parse_hyprland_monitors(scaled_reply, layout, MAX_MONITORS) == 3);
+	assert(layout[0].x == 0 && layout[0].y == 0);
+	assert(layout[0].width == 1152 && layout[0].height == 2048);
+	assert(layout[1].width == 1152 && layout[1].height == 2048);
+	assert(layout[2].width == 1920 && layout[2].height == 1080);
+	/* XWayland sees the output at its pixel size, so the offset scales up with it. */
+	assert(layout_to_root(layout, 3, scaled_root, 3, 576, 1024, &root_x, &root_y));
+	assert(root_x == 720 && root_y == 1280);
+	/* The lower part of the 270 degree output is on it, not past its unrotated height. */
+	assert(layout_to_root(layout, 3, scaled_root, 3, 1728, 2000, &root_x, &root_y));
+	assert(root_x == 2160 && root_y == 2500);
+	/* More outputs than fit: the extra one is dropped and its lines change nothing. */
+	assert(parse_hyprland_monitors(overflow_reply, layout, 2) == 2);
+	assert(!strcmp(layout[1].name, "DP-2") && layout[1].x == 1152 && layout[1].width == 1152);
+
 	puts("inputbridge: ok");
 	return 0;
 }

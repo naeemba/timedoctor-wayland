@@ -60,7 +60,12 @@ small program and a launcher run beside it.
   `/dev/input` and mirrors each real event into XWayland through XTest: a key
   press becomes a press of a keycode with no keysym (it types nothing), and
   motion or a click warps the X pointer to the real cursor position from
-  Hyprland. A click warps only once the button is back up, and nothing moves
+  Hyprland. Hyprland and XWayland can lay the same outputs out differently,
+  so the position is carried across by output name: its offset inside the
+  Hyprland output is placed inside the XRandR monitor of the same name
+  (scaled to that monitor's size). If no XRandR monitor has that name, as
+  just after a hotplug, the warp is skipped rather than sent to the wrong
+  place. A click warps only once the button is back up, and nothing moves
   the X pointer while a mouse or pen button is held, or a pen tip or finger
   is down on a touchscreen or pen tablet, so clicks and drags in X apps are
   not turned into tiny drags. A finger resting on a touchpad does not hold
@@ -94,9 +99,9 @@ Developed and tested against **3.20.14**, the Linux build installed in
 - `grim`, `xrandr` and `pactl` on `PATH`
 - 3.20+ also needs the `webkit2gtk-4.1` package
 - To build: a C compiler, `make`, and the headers for libxcb, xcb-util-image,
-  libX11 and libXtst
+  libX11, libXtst and libXrandr
 
-On Arch: `pacman -S grim xorg-xrandr libpulse webkit2gtk-4.1 libxcb xcb-util-image libx11 libxtst`.
+On Arch: `pacman -S grim xorg-xrandr libpulse webkit2gtk-4.1 libxcb xcb-util-image libx11 libxtst libxrandr`.
 
 ## Install
 

@@ -8,7 +8,9 @@
  *   - real key press        -> press+release of a keycode with no keysym
  *                              (types nothing in any X window)
  *   - real motion/wheel     -> X pointer warped to the real Hyprland cursor
- *                              position (read from Hyprland's IPC socket)
+ *                              position (read from Hyprland's IPC socket),
+ *                              carried onto XWayland's root window through
+ *                              the output of the same name
  *   - real click            -> the same warp, offset by 1px on every other
  *                              click so a click in place still moves it,
  *                              sent once the button is back up (never an X
@@ -27,6 +29,7 @@
  */
 #include <X11/Xlib.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/Xrandr.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -249,14 +252,15 @@ static int pick_blank_keycode(Display *display)
 	return keycode >= minimum ? keycode : 0;
 }
 
-/* Real cursor position in layout coordinates, which match XWayland's at scale 1. */
-static int cursor_position(int *x, int *y)
+/* Sends one command to Hyprland's IPC socket; the reply is NUL-terminated. */
+static int hyprland_request(const char *command, char *reply, size_t size)
 {
 	const char *runtime = getenv("XDG_RUNTIME_DIR"), *instance = getenv("HYPRLAND_INSTANCE_SIGNATURE");
 	struct sockaddr_un address = { .sun_family = AF_UNIX };
 	struct timeval timeout = { 0, 50000 };	/* never stall the input loop on a busy Hyprland */
-	char reply[64] = "";
-	int fd, ok = 0;
+	size_t length = strlen(command), used = 0;
+	ssize_t got;
+	int fd;
 
 	if (!runtime || !instance)
 		return 0;
@@ -266,11 +270,134 @@ static int cursor_position(int *x, int *y)
 		return 0;
 	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
-	if (!connect(fd, (struct sockaddr *)&address, sizeof address) &&
-	    write(fd, "cursorpos", sizeof "cursorpos" - 1) == sizeof "cursorpos" - 1 && read(fd, reply, sizeof reply - 1) > 0)
-		ok = sscanf(reply, "%d, %d", x, y) == 2;
+	if (!connect(fd, (struct sockaddr *)&address, sizeof address) && write(fd, command, length) == (ssize_t)length)
+		while (used < size - 1 && (got = read(fd, reply + used, size - 1 - used)) > 0)
+			used += got;	/* Hyprland closes the socket after the reply */
+	reply[used] = '\0';
 	close(fd);
-	return ok;
+	return used > 0;
+}
+
+/* Real cursor position in Hyprland's layout coordinates. */
+static int cursor_position(int *x, int *y)
+{
+	char reply[64];
+
+	return hyprland_request("cursorpos", reply, sizeof reply) && sscanf(reply, "%d, %d", x, y) == 2;
+}
+
+/*
+ * One output, in either Hyprland's layout or XWayland's root window. The two
+ * place the same outputs differently (Hyprland can leave gaps and offsets
+ * XWayland packs away), so a point is carried across by output name.
+ */
+#define MAX_MONITORS 16
+struct monitor { char name[64]; int x, y, width, height; };
+
+/*
+ * Parses `hyprctl monitors` text. Each output's mode line comes before its
+ * scale line, which comes before its transform line, so the pixel size is
+ * scaled down, then swapped for a 90 or 270 degree turn, into the size the
+ * output takes up in the layout.
+ */
+static int parse_hyprland_monitors(char *reply, struct monitor *monitors, int maximum)
+{
+	struct monitor *monitor = NULL;
+	char *line, *saved;
+	double scale;
+	int count = 0, transform, swap;
+
+	for (line = strtok_r(reply, "\n", &saved); line; line = strtok_r(NULL, "\n", &saved)) {
+		if (!strncmp(line, "Monitor ", 8)) {
+			monitor = count < maximum && sscanf(line + 8, "%63s", monitors[count].name) == 1 ? &monitors[count++] : NULL;
+		} else if (!monitor) {
+			continue;
+		} else if (sscanf(line, " %dx%d@%*f at %dx%d", &monitor->width, &monitor->height, &monitor->x, &monitor->y) == 4) {
+			/* the mode line */
+		} else if (sscanf(line, " scale: %lf", &scale) == 1 && scale > 0) {
+			monitor->width = (int)(monitor->width / scale + 0.5);
+			monitor->height = (int)(monitor->height / scale + 0.5);
+		} else if (sscanf(line, " transform: %d", &transform) == 1 && transform % 2) {
+			swap = monitor->width, monitor->width = monitor->height, monitor->height = swap;
+		}
+	}
+	return count;
+}
+
+/*
+ * Carries a layout point onto XWayland's root window through the output of
+ * the same name, scaling the offset inside it to the size XWayland gives that
+ * output. Returns 0 when the point is on no output both sides list.
+ */
+static int layout_to_root(const struct monitor *layout, int layout_count, const struct monitor *root, int root_count,
+			  int x, int y, int *root_x, int *root_y)
+{
+	int layout_index, root_index;
+
+	for (layout_index = 0; layout_index < layout_count; layout_index++) {
+		const struct monitor *from = &layout[layout_index];
+
+		if (x < from->x || x >= from->x + from->width || y < from->y || y >= from->y + from->height)
+			continue;
+		for (root_index = 0; root_index < root_count; root_index++) {
+			const struct monitor *to = &root[root_index];
+
+			if (!strcmp(to->name, from->name)) {
+				*root_x = to->x + (int)((long)(x - from->x) * to->width / from->width);
+				*root_y = to->y + (int)((long)(y - from->y) * to->height / from->height);
+				return 1;
+			}
+		}
+		return 0;
+	}
+	return 0;
+}
+
+/* Reads XWayland's outputs from XRandR into `monitors`; returns how many. */
+static int load_root_monitors(Display *display, struct monitor *monitors, int maximum)
+{
+	XRRMonitorInfo *xrandr_monitors;
+	int xrandr_count = 0, count = 0, i;
+
+	xrandr_monitors = XRRGetMonitors(display, DefaultRootWindow(display), True, &xrandr_count);
+	for (i = 0; xrandr_monitors && i < xrandr_count && count < maximum; i++) {
+		struct monitor *monitor = &monitors[count];
+		char *name = XGetAtomName(display, xrandr_monitors[i].name);
+
+		if (!name)
+			continue;
+		snprintf(monitor->name, sizeof monitor->name, "%s", name);
+		monitor->x = xrandr_monitors[i].x, monitor->y = xrandr_monitors[i].y;
+		monitor->width = xrandr_monitors[i].width, monitor->height = xrandr_monitors[i].height;
+		count++;
+		XFree(name);
+	}
+	if (xrandr_monitors)
+		XRRFreeMonitors(xrandr_monitors);
+	return count;
+}
+
+enum root_cursor { ROOT_CURSOR_FOUND, ROOT_CURSOR_OFF_OUTPUTS, ROOT_CURSOR_UNAVAILABLE };
+
+/*
+ * The real cursor position on XWayland's root window. Both output lists are
+ * read fresh for every call (well under 1ms), so a hotplug never leaves them
+ * stale.
+ */
+static enum root_cursor root_cursor_position(Display *display, int *root_x, int *root_y)
+{
+	struct monitor layout[MAX_MONITORS], root[MAX_MONITORS];
+	char reply[16384];
+	int x, y, layout_count, root_count;
+
+	if (!cursor_position(&x, &y) || !hyprland_request("monitors", reply, sizeof reply))
+		return ROOT_CURSOR_UNAVAILABLE;
+	layout_count = parse_hyprland_monitors(reply, layout, MAX_MONITORS);
+	root_count = load_root_monitors(display, root, MAX_MONITORS);
+	if (!layout_count || !root_count)
+		return ROOT_CURSOR_UNAVAILABLE;
+	return layout_to_root(layout, layout_count, root, root_count, x, y, root_x, root_y) ?
+		ROOT_CURSOR_FOUND : ROOT_CURSOR_OFF_OUTPUTS;
 }
 
 static int timedoctor_running(void)
@@ -304,6 +431,7 @@ int main(void)
 	char lock_path[256];
 	const char *runtime_directory = getenv("XDG_RUNTIME_DIR");
 	int lock_fd, inotify_fd, keycode, event_base, error_base, major, minor, direction = 1, click_offset = 0, i;
+	int warned_off_outputs = 0, warned_unavailable = 0;
 	long last_motion = 0, last_seen_timedoctor = now_ms();
 	Display *display;
 
@@ -378,13 +506,18 @@ int main(void)
 			if (warp == WARP_CLICK)
 				click_offset = !click_offset;
 			if (warp == WARP_CLICK || (warp == WARP_MOTION && now_ms() - last_motion >= MOTION_MIN_MS)) {
-				if (cursor_position(&x, &y)) {
+				enum root_cursor found = root_cursor_position(display, &x, &y);
+
+				if (found == ROOT_CURSOR_FOUND) {
 					XTestFakeMotionEvent(display, -1, x + click_offset, y, CurrentTime);
+				} else if (found == ROOT_CURSOR_OFF_OUTPUTS) {
+					/* A warp to untranslated coordinates lands on the wrong output. */
+					if (!warned_off_outputs++)
+						fprintf(stderr, "td-inputbridge: cursor on no output XWayland lists, warp skipped\n");
 				} else {
-					/* No Hyprland IPC: the old nudge, which only sometimes registers. */
-					static int warned;
-					if (!warned++)
-						fprintf(stderr, "td-inputbridge: Hyprland cursorpos unavailable, falling back to 1px nudge\n");
+					/* No Hyprland IPC or no output list: the old nudge, which only sometimes registers. */
+					if (!warned_unavailable++)
+						fprintf(stderr, "td-inputbridge: Hyprland cursorpos or output list unavailable, falling back to 1px nudge\n");
 					XTestFakeRelativeMotionEvent(display, direction, 0, CurrentTime);
 					direction = -direction;
 				}
