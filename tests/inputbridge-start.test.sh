@@ -11,7 +11,10 @@ trap 'rm -rf "$work"' EXIT
 fail() { echo "FAIL: $1"; echo "got: $2"; exit 1; }
 
 cp td-waylandshot.so "$work/"
-printf '#!/bin/sh\necho "$1 $PPID" >> "%s/started"\n' "$work" > "$work/td-inputbridge"
+cat > "$work/td-inputbridge" <<'EOF'
+#!/bin/sh
+echo "$1 $PPID" >> "$(dirname "$0")/started"
+EOF
 chmod +x "$work/td-inputbridge"
 # A real program, not a copy of sleep: coreutils may be one multi-call binary
 # that dispatches on its own name.
